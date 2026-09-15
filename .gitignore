@@ -1,0 +1,70 @@
+# Python 虚拟环境和安装产物
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+.eggs/
+wheels/
+
+# Python 缓存、测试和覆盖率产物
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node.js 依赖、构建和测试产物
+node_modules/
+dist/
+dist-ssr/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# 包管理器和调试日志
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.log
+
+# 本地环境变量和密钥配置
+.env
+.env.*
+!.env.example
+!**/.env.example
+/backend/config.json
+
+# 运行时缓存、上传模型和后端日志
+/backend/storage/cache/
+/backend/storage/logs/
+/backend/storage/models/
+
+# 编辑器配置
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# 操作系统和临时文件
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.local
+*.pid
+*.seed
+
+# 其他
+MySource/
+test-artifacts/
+.venv_locked/

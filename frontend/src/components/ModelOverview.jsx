@@ -36,10 +36,18 @@ export default function ModelOverview({ model }) {
           <span>构件</span>
           <strong>{Number(statistics.element_count || 0).toLocaleString()}</strong>
         </article>
-        <article>
+        <article
+          title={
+            model.occupied_floors == null
+              ? ''
+              : model.storeys?.length > 0
+                ? `可居住楼层；IFC 楼层实体共 ${model.storeys.length} 个（含基础/吊顶/屋面）`
+                : '楼层数来自配套 PDF 图纸标高标注（该模型 IFC 未声明楼层实体）'
+          }
+        >
           <Building2 size={17} />
           <span>楼层</span>
-          <strong>{Number(statistics.storey_count || 0).toLocaleString()}</strong>
+          <strong>{model.occupied_floors ?? '—'}</strong>
         </article>
         <article>
           <Database size={17} />
@@ -72,19 +80,25 @@ export default function ModelOverview({ model }) {
         {/* 楼层构件数量和标高的紧凑摘要。 */}
         <section>
           <h3>楼层与数量指标</h3>
-          <div className="storey-list">
-            {model.storeys?.slice(0, 4).map((storey) => (
-              <div key={storey.id}>
-                <span>{storey.name}</span>
-                <span>{storey.element_count} 构件</span>
-                <span>
-                  {storey.elevation_m === null
-                    ? '标高未定义'
-                    : `${storey.elevation_m.toFixed(2)} m`}
-                </span>
-              </div>
-            ))}
-          </div>
+          {model.storeys?.length > 0 ? (
+            <div className="storey-list">
+              {model.storeys.slice(0, 4).map((storey) => (
+                <div key={storey.id}>
+                  <span>{storey.name}</span>
+                  <span>{storey.element_count} 构件</span>
+                  <span>
+                    {storey.elevation_m === null
+                      ? '标高未定义'
+                      : `${storey.elevation_m.toFixed(2)} m`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="storey-empty">
+              该模型未声明楼层实体（IfcBuildingStorey），标高类问题无法回答。
+            </div>
+          )}
           {quantityEntries.length > 0 && (
             <div className="quantity-list">
               {quantityEntries.map(([name, value]) => (

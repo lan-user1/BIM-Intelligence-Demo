@@ -14,6 +14,9 @@ from fastapi import HTTPException, UploadFile
 from .config import settings
 from .ifc_parser import model_to_cache_json, parse_ifc
 
+# 与 ifc_parser 输出的 cache_format 一致;不一致的旧缓存会被丢弃重建。
+CACHE_FORMAT = 5
+
 
 @dataclass(frozen=True)
 class ModelInfo:
@@ -121,11 +124,12 @@ class ModelService:
 
                     cached = json.loads(cache_path.read_text(encoding="utf-8"))
                     stat = model.path.stat()
-                    # 只有源文件未变化时才使用磁盘缓存。
+                    # 只有源文件未变化且解析格式版本一致时才使用磁盘缓存。
                     if (
                         cached.get("file_size") == stat.st_size
                         and cached.get("checksum")
                         and cached.get("source_mtime_ns") == stat.st_mtime_ns
+                        and cached.get("cache_format") == CACHE_FORMAT
                     ):
                         self._cache[model_id] = cached
                         return cached

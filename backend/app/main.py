@@ -16,6 +16,7 @@ from .config import settings
 from .knowledge import knowledge_index
 from .llm import llm_service
 from .model_service import model_service
+from .rules import RuleEngine
 from .schemas import ChatRequest, ReindexResponse
 
 
@@ -138,9 +139,57 @@ async def reindex_knowledge() -> dict[str, Any]:
     }
 
 
+def _rule_answer(
+    model_id: str, question: str
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """规则引擎先行:命中返回 (规则结果, 模型数据),未命中返回 None。"""
+    model = model_service.get_model(model_id)
+    result = RuleEngine(model).ask(question)
+    if result is None:
+        return None
+    return result, model
+
+
+def _rule_meta(
+    request: ChatRequest, result: dict[str, Any], model: dict[str, Any]
+) -> dict[str, Any]:
+    """组装规则引擎回答的 meta 事件:回答模式、证据、来源与备注。"""
+    return {
+        "mode": "rule",
+        "model_id": request.model_id,
+        "sources": [
+            {"type": "ifc", "title": model["file_name"], "model_id": model["id"]}
+        ],
+        "evidence": result["evidence"][:20],
+        "note": result["note"],
+    }
+
+
 @app.post("/api/chat")
 async def chat(request: ChatRequest) -> dict[str, Any]:
-    """非流式问答接口，适合不需要逐字展示的调用方。"""
+    """非流式问答接口：规则引擎命中直接返回，否则调用大模型。"""
+    rule_hit = None
+    if request.model_id:
+        try:
+            rule_hit = await run_in_threadpool(
+                _rule_answer, request.model_id, request.question
+            )
+        except HTTPException:
+            # 模型解析失败时让 LLM 分支自行处理并返回同样的错误。
+            rule_hit = None
+    if rule_hit is not None:
+        result, model = rule_hit
+        return {
+            "answer": result["answer"],
+            "mode": "rule",
+            "value": result["value"],
+            "evidence": result["evidence"][:20],
+            "note": result["note"],
+            "sources": [
+                {"type": "ifc", "title": model["file_name"], "model_id": model["id"]}
+            ],
+            "model_id": request.model_id,
+        }
     if not settings.ai_configured:
         raise HTTPException(
             status_code=503,
@@ -158,6 +207,7 @@ async def chat(request: ChatRequest) -> dict[str, Any]:
     answer = await llm_service.complete(_build_messages(request, context))
     return {
         "answer": answer,
+        "mode": "llm",
         "sources": context["sources"],
         "model_id": request.model_id,
     }
@@ -166,6 +216,35 @@ async def chat(request: ChatRequest) -> dict[str, Any]:
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest) -> StreamingResponse:
     """通过 SSE 返回元信息、文本 token 和完成/错误事件。"""
+    rule_hit = None
+    if request.model_id:
+        try:
+            rule_hit = await run_in_threadpool(
+                _rule_answer, request.model_id, request.question
+            )
+        except HTTPException:
+            rule_hit = None
+
+    if rule_hit is not None:
+        result, model = rule_hit
+        meta = _rule_meta(request, result, model)
+
+        async def event_stream():
+            # 规则引擎回答:meta 后一次性发送完整文本。
+            yield _sse("meta", meta)
+            yield _sse("token", {"text": result["answer"]})
+            yield _sse("done", {})
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     if not settings.ai_configured:
         raise HTTPException(
             status_code=503,
@@ -188,6 +267,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         yield _sse(
             "meta",
             {
+                "mode": "llm",
                 "model": settings.model_name,
                 "model_id": request.model_id,
                 "sources": context["sources"],
@@ -237,6 +317,10 @@ def _build_context(
             "element_counts": model["element_counts"][:40],
             "top_properties": model["top_properties"],
             "quantity_totals": model["quantity_totals"],
+            "materials": {
+                "count": len(model.get("materials", [])),
+                "names": [m.get("name") for m in model.get("materials", [])][:30],
+            },
             "matched_elements": matched_elements,
         }
     if submitted_model_context:
@@ -330,10 +414,11 @@ def _build_messages(
         context_text = context_text[: settings.max_context_chars] + "\n[上下文已截断]"
 
     system_prompt = (
-        "你是专业的 BIM/IFC 数据助手。请优先根据提供的 IFC 解析结果回答，"
-        "引用构件时给出 IFC 类型、楼层、名称或 GlobalId。资料片段用于补充规范或文档信息。"
-        "如果上下文不足，要明确说明缺少什么数据，不能编造模型内容。"
-        "回答使用简洁中文，数字和单位要准确。\n\n"
+        "你是专业的 BIM/IFC 数据助手，请按以下铁律回答：\n"
+        "1. 只能依据下方提供的 IFC 解析结果和资料片段回答，禁止编造任何数字、名称或 GlobalId。\n"
+        "2. 上下文里没有的数据，明确说明缺少什么，不要猜测。\n"
+        "3. 涉及具体构件时引用其 GlobalId 或 IFC 类型、楼层、名称；先给结论，再列证据。\n"
+        "4. 回答使用简洁中文，数字和单位要准确。\n\n"
         f"{context_text}"
     )
     history = [

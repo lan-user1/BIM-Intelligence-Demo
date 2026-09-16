@@ -746,6 +746,16 @@
   font-size: 9px;
 }
 
+.storey-empty {
+  padding: 6px 8px;
+  color: var(--muted);
+  background: #f4f7f7;
+  border: 1px dashed var(--line);
+  border-radius: 5px;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
 .storey-list > div span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1161,6 +1171,60 @@
   border: 1px solid #ead4c8;
   border-radius: 3px;
   font-size: 8px;
+}
+
+/* 回答模式徽标：规则引擎为绿色，大模型兜底为蓝色。 */
+.mode-badge {
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: 8px;
+}
+
+.mode-badge--rule {
+  color: #2e7d4f;
+  background: #e7f4ec;
+  border: 1px solid #c3e2cf;
+}
+
+.mode-badge--llm {
+  color: #2f6f9f;
+  background: #e8f1f8;
+  border: 1px solid #c9ddec;
+}
+
+/* 规则引擎回答的证据标签（GlobalId 或材料名称）。 */
+.chat-message__evidence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.chat-message__evidence-label {
+  color: #44555b;
+  font-size: 8px;
+}
+
+.chat-message__evidence-id {
+  padding: 3px 5px;
+  color: #44555b;
+  background: #eef2f3;
+  border: 1px solid #d3dde0;
+  border-radius: 3px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 8px;
+}
+
+.chat-message__evidence-more {
+  color: #44555b;
+  font-size: 8px;
+}
+
+.chat-message__note {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 9px;
 }
 
 .chat-suggestions {

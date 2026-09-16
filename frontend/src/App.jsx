@@ -328,7 +328,13 @@ function App() {
             {modelDetail && (
               <div className="model-heading-stats">
                 <span>{modelDetail.statistics.element_count.toLocaleString()} 构件</span>
-                <span>{modelDetail.statistics.storey_count} 楼层</span>
+                <span>
+                  {modelDetail.occupied_floors != null
+                    ? `${modelDetail.occupied_floors} 层`
+                    : modelDetail.statistics.storey_count > 0
+                      ? `${modelDetail.statistics.storey_count} 楼层实体`
+                      : '楼层未声明'}
+                </span>
               </div>
             )}
           </header>

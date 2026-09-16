@@ -12,6 +12,7 @@
 - 支持结构边线、视图适配、俯视图和鼠标交互
 - 检索本地 PDF、Markdown、TXT BIM 资料
 - 将当前模型详情通过 `model_context` 随问答请求发送
+- **混合问答：规则引擎优先，DeepSeek 兜底**（见下方「混合问答」）
 - 使用 DeepSeek/OpenAI 兼容接口进行流式问答
 - 使用 Markdown 渲染 AI 回答，支持标题、列表、表格和代码块
 
@@ -58,14 +59,15 @@
 FastAPI
 ├── 模型上传与 IFC 解析
 ├── 模型数据缓存
+├── 规则引擎（计数、楼层、定位、图纸交叉验证等 11 类）
 ├── PDF/Markdown/TXT 知识检索
-└── DeepSeek/OpenAI 兼容调用
+└── DeepSeek/OpenAI 兼容调用（规则未命中的兜底）
 ```
 
 ## 目录结构
 
 ```text
-BIMProject/
+BIM-Intelligence-Demo/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py
@@ -74,7 +76,11 @@ BIMProject/
 │   │   ├── model_service.py
 │   │   ├── knowledge.py
 │   │   ├── llm.py
+│   │   ├── rules.py
+│   │   ├── pdf_facts.py
 │   │   └── schemas.py
+│   ├── tests/
+│   │   └── test_rules.py
 │   ├── documents/
 │   ├── storage/
 │   ├── config.json
@@ -95,8 +101,10 @@ BIMProject/
 │   ├── scripts/
 │   ├── package.json
 │   └── README.md
+├── scripts/
+│   └── benchmark.py
 ├── MySource/
-└── Readme.md
+└── 测试报告.md
 ```
 
 ## 快速启动
@@ -104,7 +112,7 @@ BIMProject/
 ### 启动后端
 
 ```powershell
-cd D:\Study\summ2026\BIMProject\backend
+cd D:\claudeworks\国际课程\BIM-Intelligence-Demo\backend
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -120,7 +128,7 @@ python -m pip install -r requirements.txt
 ### 启动前端
 
 ```powershell
-cd D:\Study\summ2026\BIMProject\frontend
+cd D:\claudeworks\国际课程\BIM-Intelligence-Demo\frontend
 npm install
 npm run dev
 ```
@@ -193,6 +201,23 @@ Vite 会把 `/api` 请求代理到 `http://127.0.0.1:8000`。
 
 后端会同时读取模型缓存、匹配相关构件并检索本地资料，最终通过 SSE 返回流式回答。
 
+## 混合问答
+
+每个问题先交给**规则引擎**（`backend/app/rules.py`），命中规则就由代码现场查当前模型并直接回答：
+
+- 答案运行时从 IFC 现算，程序中没有任何写死答案，换模型自动重算
+- 每题附 GlobalId 证据（材料、房间等无 GlobalId 的数据会如实说明来源）
+- 秒答、零 API 费用、答案稳定可复现
+- 覆盖 11 类问题：构件计数（可限定楼层）、最高/最低楼层、楼层标高与高差、
+  图纸标高交叉验证、哪层构件最多、最常见族类型、构件定位、GlobalId 查询、房间查询
+
+未命中规则的开放问题交给 **DeepSeek**，带模型统计、匹配构件和本地资料上下文流式回答，
+并遵守系统提示中的铁律（只依据上下文、禁止编造、能引 GlobalId 就引）。
+前端在每条回答上方显示模式徽标（`规则引擎` / 大模型名）和证据标签。
+
+22 道基准题（含陷阱题与跨数据源题）全部由规则引擎回答，
+运行 `scripts/benchmark.py` 可生成 `测试报告.md`（当前 22/22 = 100%）。
+
 ## 主要 API
 
 | 方法 | 路径 | 说明 |
@@ -211,6 +236,13 @@ Vite 会把 `/api` 请求代理到 `http://127.0.0.1:8000`。
 ## 验证命令
 
 ```powershell
+# 规则引擎基准测试（22 题），并生成 测试报告.md
+cd D:\claudeworks\国际课程\BIM-Intelligence-Demo
+.\backend\.venv\Scripts\python.exe scripts\benchmark.py
+
+# 后端 pytest 测试（基准 22 题 + 证据真实性校验）
+.\backend\.venv\Scripts\python.exe -m pytest backend\tests
+
 # 前端代码检查
 cd frontend
 npm run lint

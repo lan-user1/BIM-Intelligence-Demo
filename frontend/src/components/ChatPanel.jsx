@@ -5,11 +5,11 @@ import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 import { streamChat } from '../api'
 
-// 空会话状态下的示例问题，引导用户直接使用当前模型上下文。
+// 空会话状态下的示例问题：前两条走规则引擎秒答，第三条演示 LLM 兜底。
 const suggestions = [
-  '统计各楼层构件数量',
-  '这个模型有多少墙和门窗？',
-  '哪些构件缺少属性或材质信息？',
+  '这栋楼一共有几扇门？',
+  '哪一层的墙最多？',
+  '介绍一下这栋楼的结构',
 ]
 
 export default function ChatPanel({
@@ -81,8 +81,11 @@ export default function ChatPanel({
               if (next[assistantIndex]) {
                 next[assistantIndex] = {
                   ...next[assistantIndex],
+                  mode: meta.mode || 'llm',
                   sources: meta.sources || [],
                   provider: meta.model,
+                  evidence: meta.evidence || [],
+                  note: meta.note || '',
                 }
               }
               return next
@@ -180,7 +183,12 @@ export default function ChatPanel({
           >
             <div className="chat-message__meta">
               <span>{message.role === 'user' ? '你' : 'BIM AI'}</span>
-              {message.provider && <span>{message.provider}</span>}
+              {message.role === 'assistant' && message.mode === 'rule' && (
+                <span className="mode-badge mode-badge--rule">规则引擎</span>
+              )}
+              {message.role === 'assistant' && message.mode === 'llm' && message.provider && (
+                <span className="mode-badge mode-badge--llm">{message.provider}</span>
+              )}
             </div>
             <div className="chat-message__content">
               {message.content ? (
@@ -205,6 +213,24 @@ export default function ChatPanel({
                 ))}
               </div>
             )}
+            {message.evidence?.length > 0 && (
+              <div className="chat-message__evidence">
+                <span className="chat-message__evidence-label">
+                  证据 · {message.evidence.length} 项
+                </span>
+                {message.evidence.slice(0, 6).map((gid) => (
+                  <code key={gid} className="chat-message__evidence-id" title={gid}>
+                    {gid}
+                  </code>
+                ))}
+                {message.evidence.length > 6 && (
+                  <span className="chat-message__evidence-more">
+                    +{message.evidence.length - 6}
+                  </span>
+                )}
+              </div>
+            )}
+            {message.note && <div className="chat-message__note">{message.note}</div>}
           </article>
         ))}
       </div>

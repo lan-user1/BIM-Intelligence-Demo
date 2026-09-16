@@ -57,6 +57,9 @@ RELATION_TYPES = {
     "IFCRELCONTAINEDINSPATIALSTRUCTURE",
     "IFCRELASSOCIATESMATERIAL",
     "IFCRELASSOCIATESCLASSIFICATION",
+    # 门/窗填充洞口、洞口被墙包围:用于把这类构件回溯到墙所在的楼层。
+    "IFCRELFILLSELEMENT",
+    "IFCRELVOIDSELEMENT",
 }
 
 # 单位实体用于把 IFC 原始数值转换为米。
@@ -75,6 +78,12 @@ MATERIAL_TYPES = {
     "IFCMATERIALPROFILE",
     "IFCMATERIALPROFILESETUSAGE",
 }
+
+# 推算视觉层数时要排除的楼层实体名模式:基础、吊顶、屋面等非居住层。
+OCCUPIED_EXCLUDE_PATTERNS = (
+    "foundation", "ceiling", "roof", "parapet", "top of",
+    "基础", "吊顶", "天花板", "屋面", "屋顶", "天面",
+)
 
 # 常见构件类型前缀，支持 IFC4 的多种子类型。
 PRODUCT_PREFIXES = (
@@ -123,6 +132,7 @@ PRODUCT_PREFIXES = (
     "IFCSANITARYTERMINAL",
     "IFCSPACEHEATER",
     "IFCSWITCHINGDEVICE",
+    "IFCSYSTEMFURNITUREELEMENT",
     "IFCUNITARYEQUIPMENT",
     "IFCREINFORCINGBAR",
     "IFCREINFORCINGMESH",
@@ -342,8 +352,11 @@ def _ref_id(value: Any) -> int | None:
     return value.id if isinstance(value, IfcReference) else None
 
 
-# 提取引用列表并过滤非引用参数。
+# 提取引用列表并过滤非引用参数;单个引用也按一个元素的列表处理,
+# 因为 IFC 导出的关系实体中 RelatedObjects 可能是单引用也可能是一对括号的列表。
 def _ref_ids(value: Any) -> list[int]:
+    if isinstance(value, IfcReference):
+        return [value.id]
     if not isinstance(value, list):
         return []
     return [item.id for item in value if isinstance(item, IfcReference)]
@@ -385,8 +398,12 @@ def _number(value: Any) -> float | None:
 
 
 # 判断实体是否属于需要进入构件清单的 IFC 产品类型。
+# 排除 TYPE 与 PROPERTIES 后缀:如 IFCDOORTYPE、IFCDOORLININGPROPERTIES
+# 是类型/属性定义实体,不是建筑构件。
 def _is_product(type_name: str) -> bool:
-    return type_name.startswith(PRODUCT_PREFIXES) and not type_name.endswith("TYPE")
+    if type_name.endswith(("TYPE", "PROPERTIES")):
+        return False
+    return type_name.startswith(PRODUCT_PREFIXES)
 
 
 # 根据 IFC 类型归入建筑、结构、机电或其他类别。
@@ -448,6 +465,33 @@ def _extract_value(entity: IfcEntity) -> Any:
     return None
 
 
+# 从楼层实体名称推算视觉上的可居住层数:排除基础/吊顶/屋面等,
+# 并把名称包含其他楼层名的附属层(如 "Level 1 Living Rm." 并入 "Level 1")。
+def _occupied_floor_count(storeys: list[dict[str, Any]]) -> int:
+    names = [storey["name"] for storey in storeys]
+    candidates = [
+        name for name in names
+        if not any(pattern in name.lower() for pattern in OCCUPIED_EXCLUDE_PATTERNS)
+    ]
+    main_floors = [
+        name for name in candidates
+        if not any(other != name and other in name for other in names)
+    ]
+    return len(main_floors)
+
+
+# 模型没有楼层实体时,从配套 PDF 图纸的标高标注取视觉层数(局部导入避免循环)。
+# 上传副本文件名带随机前缀(如 1cca82a6a1-rst_basic_sample_project),按后缀匹配。
+def _occupied_floors_from_drawing(path: Path) -> int | None:
+    from .pdf_facts import OCCUPIED_FLOORS_FROM_DRAWING
+
+    stem = path.stem
+    for key, value in OCCUPIED_FLOORS_FROM_DRAWING.items():
+        if stem == key or stem.endswith("-" + key):
+            return value
+    return None
+
+
 def _build_model_summary(
     model_id: str,
     path: Path,
@@ -474,6 +518,8 @@ def _build_model_summary(
     property_owner: dict[int, list[int]] = {}
     quantities: dict[int, dict[str, float]] = {}
     material_sets: dict[int, list[str]] = defaultdict(list)
+    openings_by_filler: dict[int, int] = {}
+    walls_by_opening: dict[int, list[int]] = defaultdict(list)
 
     # 第一轮：展开构件与空间、类型、属性和材料之间的关系。
     for entity in entities.values():
@@ -521,6 +567,24 @@ def _build_model_summary(
             )
             for object_id in _ref_ids(entity.params[4]):
                 material_sets[object_id].append(material_name)
+        elif entity.type_name == "IFCRELFILLSELEMENT":
+            # 记录"门/窗填充了哪个洞口",楼层回溯时经洞口找到宿主墙。
+            if len(entity.params) < 6:
+                continue
+            opening_id = _ref_id(entity.params[4])
+            if opening_id is None:
+                continue
+            for filler_id in _ref_ids(entity.params[5]):
+                openings_by_filler[filler_id] = opening_id
+        elif entity.type_name == "IFCRELVOIDSELEMENT":
+            # 记录"哪个洞口挖在哪堵墙上",与 FillsVoids 配合完成三级回溯。
+            if len(entity.params) < 6:
+                continue
+            wall_id = _ref_id(entity.params[4])
+            if wall_id is None:
+                continue
+            for opening_id in _ref_ids(entity.params[5]):
+                walls_by_opening[opening_id].append(wall_id)
 
     # 第二轮：读取属性集和数量集，并挂到对应构件。
     for entity in entities.values():
@@ -563,19 +627,39 @@ def _build_model_summary(
         if entity.type_name == "IFCBUILDINGSTOREY"
     }
     storey_counts: Counter[int] = Counter()
-    # 构件可能只直接关联到聚合父节点，因此继续向上查找楼层。
+
+    def resolve_storey(element_id: int, _seen: set[int] | None = None) -> int | None:
+        """三级回溯构件楼层:直接空间包含 → 聚合父链 → 门/窗所填充洞口所在的墙。"""
+        seen = _seen if _seen is not None else set()
+        if element_id in seen:
+            return None
+        seen.add(element_id)
+
+        entity = entities.get(element_id)
+        if entity is not None and entity.type_name == "IFCBUILDINGSTOREY":
+            return element_id
+        direct = element_to_storey.get(element_id)
+        if direct is not None:
+            return direct
+
+        # 挂在墙洞口的门/窗(或洞口本身):先找宿主墙,再解析墙的楼层。
+        opening_id = openings_by_filler.get(element_id)
+        if opening_id is None and entity is not None and entity.type_name == "IFCOPENINGELEMENT":
+            opening_id = element_id
+        if opening_id is not None:
+            for wall_id in walls_by_opening.get(opening_id, []):
+                storey_id = resolve_storey(wall_id, seen)
+                if storey_id is not None:
+                    return storey_id
+
+        # 幕墙门等聚合在父构件(如 IfcCurtainWall)下的情况,沿父链上溯。
+        parent_id = parent_by_child.get(element_id)
+        if parent_id is not None:
+            return resolve_storey(parent_id, seen)
+        return None
+
     for element_id in products:
-        storey_id = element_to_storey.get(element_id)
-        if storey_id is None:
-            current_id = element_id
-            visited: set[int] = set()
-            while current_id in parent_by_child and current_id not in visited:
-                visited.add(current_id)
-                current_id = parent_by_child[current_id]
-                parent = entities.get(current_id)
-                if parent and parent.type_name == "IFCBUILDINGSTOREY":
-                    storey_id = current_id
-                    break
+        storey_id = resolve_storey(element_id)
         if storey_id is not None:
             storey_counts[storey_id] += 1
 
@@ -675,7 +759,7 @@ def _build_model_summary(
     common_elements: list[dict[str, Any]] = []
     # 输出前端表格和问答检索使用的扁平构件结构。
     for element_id, entity in products.items():
-        storey_id = element_to_storey.get(element_id)
+        storey_id = resolve_storey(element_id)
         type_id = type_by_element.get(element_id)
         common_elements.append(
             {
@@ -696,6 +780,8 @@ def _build_model_summary(
                 ),
                 "type_name": type_names.get(type_id, "") if type_id else "",
                 "storey_id": storey_id,
+                # 直接空间包含的楼层(未做洞口/聚合回溯),问答规则按此口径统计。
+                "direct_storey_id": element_to_storey.get(element_id),
                 "storey": (
                     _entity_name(storey_entities.get(storey_id))
                     if storey_id in storey_entities
@@ -707,6 +793,15 @@ def _build_model_summary(
             }
         )
     common_elements.sort(key=lambda item: (item["category"], item["ifc_type"], item["id"]))
+
+    # 汇总所有 IfcMaterial 实体,供问答"有多少材料"等规则使用。
+    materials: list[dict[str, Any]] = []
+    for entity in entities.values():
+        if entity.type_name == "IFCMATERIAL":
+            materials.append(
+                {"id": entity.id, "name": _property_name(entity) or f"材料 #{entity.id}"}
+            )
+    materials.sort(key=lambda item: item["id"])
 
     file_stat = path.stat()
     return {
@@ -760,6 +855,12 @@ def _build_model_summary(
         ],
         "units": units,
         "length_scale_to_metre": length_scale_to_metre,
+        "materials": materials,
+        # 视觉层数:有楼层实体时按名称推算;没有时查图纸数据线(见 pdf_facts)。
+        "occupied_floors": (
+            _occupied_floor_count(storeys) if storeys
+            else _occupied_floors_from_drawing(path)
+        ),
         "top_properties": [
             {"name": name, "count": count}
             for name, count in property_name_counts.most_common(30)
@@ -769,6 +870,8 @@ def _build_model_summary(
             for name, value in sorted(numeric_quantity_totals.items())[:40]
         },
         "elements": common_elements,
+        # 解析格式版本:结构变更后递增,旧的磁盘缓存自动失效重建。
+        "cache_format": 5,
     }
 
 
@@ -790,6 +893,19 @@ def parse_ifc(path: Path, model_id: str) -> dict[str, Any]:
     if not type_counts:
         raise ValueError("The file does not contain readable IFC STEP entities.")
     return _build_model_summary(model_id, path, entities, type_counts, schema)
+
+
+# 把问题切成检索词元:中文按单字+双字 n-gram,英文按单词,兼顾中英混合问题。
+# 纯按空格分词时中文整句是一个 token,永远匹配不上构件。
+def _query_tokens(question: str) -> list[str]:
+    tokens: list[str] = []
+    for segment in re.findall(r"[一-鿿]+", question):
+        if len(segment) == 1:
+            tokens.append(segment)
+        else:
+            tokens.extend(segment[i : i + 2] for i in range(len(segment) - 1))
+    tokens.extend(word for word in re.findall(r"[a-z0-9_]+", question.lower()))
+    return list(dict.fromkeys(tokens))
 
 
 # 判断构件是否满足名称搜索、类型和楼层过滤条件。
@@ -819,7 +935,7 @@ def element_matches(
             " ".join(element.get("materials", [])),
         )
     ).lower()
-    return all(token in haystack for token in query.lower().split())
+    return all(token in haystack for token in _query_tokens(query))
 
 
 # 根据问题中的词元对构件进行简单相关性排序，供 AI 上下文引用。
@@ -828,7 +944,7 @@ def search_elements(
     question: str,
     limit: int = 24,
 ) -> list[dict[str, Any]]:
-    tokens = [token for token in re.split(r"\s+", question.lower()) if token]
+    tokens = _query_tokens(question)
     if not tokens:
         return []
 

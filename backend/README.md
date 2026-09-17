@@ -164,7 +164,7 @@ python -m pip install -r requirements.txt
 可通过环境变量指定其他配置文件：
 
 ```powershell
-$env:DEEPSEEK_CONFIG_FILE = "D:\path\to\config.json"
+$env:DEEPSEEK_CONFIG_FILE = ".\config.json"
 ```
 
 未在 JSON 中设置的字段会回退到 `.env`：

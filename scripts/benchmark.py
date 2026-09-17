@@ -12,6 +12,9 @@
 import sys
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
@@ -47,8 +50,8 @@ CASES = [
     ("最高的楼层叫什么？", "Roof Line", True),
     ("最低的楼层标高是多少？", "Foundation", True),
     ("Level 2 比 Level 1 高多少？", 3000, True),
-    ("Entrance door 在哪一层？", "Level 1", True),
-    ("Entrance door 的 GlobalId 是什么？", "1PDnLIM013wvkZO9Lb4$i6", True),
+    ("Basic Wall:Wall - Timber Clad:234869 在哪一层？", "Level 2", True),
+    ("Basic Wall:Wall - Timber Clad:234869 的 GlobalId 是什么？", "28i3i5WDD8Ju0YHnzXOzdu", True),
     ("最常用的门类型是什么？", "Single-Flush:800 x 2100", True),
     ("房间 101 是什么房间？", "Kitchen & Dining", False),
 ]
@@ -94,7 +97,7 @@ def main() -> None:
     print(f"证据引用合规率: {cite_ok}/{cite_total} = {cite:.1f}%")
 
     report_path = PROJECT_ROOT / "测试报告.md"
-    with open(report_path, "w", encoding="utf-8") as f:
+    with open(report_path, "w", encoding="utf-8", newline="\n") as f:
         f.write("# 基准测试报告\n\n")
         f.write(f"> 模型: {model['file_name']}({model['schema']})\n\n")
         f.write("## 汇总\n\n")

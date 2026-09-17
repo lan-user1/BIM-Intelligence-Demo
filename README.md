@@ -109,10 +109,12 @@ BIM-Intelligence-Demo/
 
 ## 快速启动
 
+以下命令均从项目根目录执行。
+
 ### 启动后端
 
 ```powershell
-cd D:\claudeworks\国际课程\BIM-Intelligence-Demo\backend
+cd backend
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -128,7 +130,7 @@ python -m pip install -r requirements.txt
 ### 启动前端
 
 ```powershell
-cd D:\claudeworks\国际课程\BIM-Intelligence-Demo\frontend
+cd frontend
 npm install
 npm run dev
 ```
@@ -210,6 +212,8 @@ Vite 会把 `/api` 请求代理到 `http://127.0.0.1:8000`。
 - 秒答、零 API 费用、答案稳定可复现
 - 覆盖 11 类问题：构件计数（可限定楼层）、最高/最低楼层、楼层标高与高差、
   图纸标高交叉验证、哪层构件最多、最常见族类型、构件定位、GlobalId 查询、房间查询
+- 只有意图明确、字段完整且结果唯一时才直接回答；数据缺失、目标歧义或口径未覆盖时
+  返回 `None`，交由 DeepSeek 兜底
 
 未命中规则的开放问题交给 **DeepSeek**，带模型统计、匹配构件和本地资料上下文流式回答，
 并遵守系统提示中的铁律（只依据上下文、禁止编造、能引 GlobalId 就引）。
@@ -235,9 +239,10 @@ Vite 会把 `/api` 请求代理到 `http://127.0.0.1:8000`。
 
 ## 验证命令
 
+以下命令均从项目根目录执行。
+
 ```powershell
 # 规则引擎基准测试（22 题），并生成 测试报告.md
-cd D:\claudeworks\国际课程\BIM-Intelligence-Demo
 .\backend\.venv\Scripts\python.exe scripts\benchmark.py
 
 # 后端 pytest 测试（基准 22 题 + 证据真实性校验）
